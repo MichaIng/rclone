@@ -97,16 +97,58 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
+      - name: Get runner parameters
+        id: get-runner-parameters
+        run: |
+          echo "year-week=$(date -u "+%Y%V")" >> $GITHUB_OUTPUT
+          echo "runner-os-version=$ImageOS" >> $GITHUB_OUTPUT
+
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Install Go
+        id: setup-go
         uses: actions/setup-go@v6
         with:
           go-version: ${{ matrix.go }}
           check-latest: true
+          # Caching is handled explicitly below. setup-go's built-in cache
+          # keys only on go.sum, so all matrix jobs collide on one key and
+          # only the first to finish saves - which loses the cross-compile
+          # build cache.
+          cache: false
+
+      - name: Get Go paths
+        id: go-paths
+        run: |
+          echo "build-cache=$(go env GOCACHE)" >> $GITHUB_OUTPUT
+          echo "mod-cache=$(go env GOMODCACHE)" >> $GITHUB_OUTPUT
+
+      # The module cache holds downloaded source and is identical across
+      # jobs (it depends only on go.sum, not on OS, arch or Go version), so
+      # it is shared via a single key to avoid storing the same ~600 MiB in
+      # every job's cache and overflowing the repo cache limit.
+      - name: Module cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.go-paths.outputs.mod-cache }}
+          key: go-mod-${{ steps.get-runner-parameters.outputs.year-week }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-mod-${{ steps.get-runner-parameters.outputs.year-week }}-
+            go-mod-
+
+      # The build cache holds compiled artifacts which are specific to the
+      # OS, arch and Go version, so it is kept per job.
+      - name: Build cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.go-paths.outputs.build-cache }}
+          key: go-build-${{ matrix.job_name }}-${{ steps.get-runner-parameters.outputs.runner-os-version }}-go${{ steps.setup-go.outputs.go-version }}-${{ steps.get-runner-parameters.outputs.year-week }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-build-${{ matrix.job_name }}-${{ steps.get-runner-parameters.outputs.runner-os-version }}-go${{ steps.setup-go.outputs.go-version }}-${{ steps.get-runner-parameters.outputs.year-week }}-
+            go-build-${{ matrix.job_name }}-${{ steps.get-runner-parameters.outputs.runner-os-version }}-go${{ steps.setup-go.outputs.go-version }}-
 
       - name: Set environment variables
         run: |
@@ -231,11 +273,19 @@ jobs:
           check-latest: true
           cache: false
           
+      - name: Module cache
+        uses: actions/cache@v5
+        with:
+          path: ~/go/pkg/mod
+          key: go-mod-${{ steps.get-runner-parameters.outputs.year-week }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-mod-${{ steps.get-runner-parameters.outputs.year-week }}-
+            go-mod-
+
       - name: Cache
         uses: actions/cache@v5
         with:
           path: |
-            ~/go/pkg/mod
             ~/.cache/go-build
             ~/.cache/golangci-lint
           key: golangci-lint-${{ steps.get-runner-parameters.outputs.runner-os-version }}-go${{ steps.setup-go.outputs.go-version }}-${{ steps.get-runner-parameters.outputs.year-week }}-${{ hashFiles('go.sum') }}
@@ -309,6 +359,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Get runner parameters
+        id: get-runner-parameters
+        run: |
+          echo "year-week=$(date -u "+%Y%V")" >> $GITHUB_OUTPUT
+          echo "runner-os-version=$ImageOS" >> $GITHUB_OUTPUT
+
       - name: Checkout
         uses: actions/checkout@v6
         with:
@@ -316,9 +372,37 @@ jobs:
 
       # Upgrade together with NDK version
       - name: Set up Go
+        id: setup-go
         uses: actions/setup-go@v6
         with:
           go-version: '~1.26.3'
+          # Caching is handled explicitly below to share the module cache
+          # with the other jobs - see the build job for the rationale.
+          cache: false
+
+      - name: Get Go paths
+        id: go-paths
+        run: |
+          echo "build-cache=$(go env GOCACHE)" >> $GITHUB_OUTPUT
+          echo "mod-cache=$(go env GOMODCACHE)" >> $GITHUB_OUTPUT
+
+      - name: Module cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.go-paths.outputs.mod-cache }}
+          key: go-mod-${{ steps.get-runner-parameters.outputs.year-week }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-mod-${{ steps.get-runner-parameters.outputs.year-week }}-
+            go-mod-
+
+      - name: Build cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.go-paths.outputs.build-cache }}
+          key: go-build-android-${{ steps.get-runner-parameters.outputs.runner-os-version }}-go${{ steps.setup-go.outputs.go-version }}-${{ steps.get-runner-parameters.outputs.year-week }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-build-android-${{ steps.get-runner-parameters.outputs.runner-os-version }}-go${{ steps.setup-go.outputs.go-version }}-${{ steps.get-runner-parameters.outputs.year-week }}-
+            go-build-android-${{ steps.get-runner-parameters.outputs.runner-os-version }}-go${{ steps.setup-go.outputs.go-version }}-
 
       - name: Set global environment variables
         run: |
